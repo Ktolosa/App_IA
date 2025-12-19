@@ -9,134 +9,151 @@ import io
 from fpdf import FPDF
 from docx import Document
 
-# --- CONFIGURACIÓN E INTERFAZ ---
-st.set_page_config(page_title="IA Multimodal Pro", page_icon="✨", layout="wide")
+# --- CONFIGURACIÓN E INTERFAZ ESTILO GEMINI ---
+st.set_page_config(page_title="Gemini Ultra Pro", page_icon="✨", layout="wide")
 
-# CSS para ocultar etiquetas y ajustar el botón al lado del input
+# CSS para limpiar el file uploader y estilizar el chat
 st.markdown("""
     <style>
-    .stChatFloatingInputContainer { background-color: transparent !important; }
-    div[data-testid="stColumn"] { display: flex; align-items: center; }
-    .stFileUploader { padding-bottom: 0px; }
+    /* Ocultar textos del cargador de archivos para dejar solo el clip */
+    section[data-testid="stFileUploader"] section { padding: 0; min-height: 0; border: none; }
+    section[data-testid="stFileUploader"] label, 
+    section[data-testid="stFileUploader"] small { display: none; }
+    
+    /* Ajuste de la barra inferior */
+    .stChatFloatingInputContainer { 
+        padding-bottom: 20px; 
+        background-color: transparent !important; 
+    }
+    
+    /* Contenedor principal centrado */
+    .block-container { max-width: 900px; padding-top: 2rem; }
+    
+    /* Estilo para los botones del historial */
+    .stButton>button {
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        padding: 10px;
+        border-radius: 10px;
+    }
+    .stButton>button:hover { background-color: #e0e0e0; }
     </style>
     """, unsafe_allow_html=True)
 
-# Inicializar Groq
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# --- GESTIÓN DE ESTADOS (MEMORIA Y CHATS) ---
+if "all_chats" not in st.session_state:
+    st.session_state.all_chats = {} # Diccionario para guardar múltiples chats
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = "Chat 1"
+if st.session_state.current_chat_id not in st.session_state.all_chats:
+    st.session_state.all_chats[st.session_state.current_chat_id] = []
 
-try:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
-    st.error("Configura GROQ_API_KEY en Secrets.")
-    st.stop()
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# --- FUNCIONES DE GENERACIÓN DE ARCHIVOS ---
+# --- BARRA LATERAL (HISTORIAL Y NUEVO CHAT) ---
+with st.sidebar:
+    st.title("✨ Gemini Pro")
+    if st.button("➕ Nuevo chat", use_container_width=True):
+        new_id = f"Chat {len(st.session_state.all_chats) + 1}"
+        st.session_state.all_chats[new_id] = []
+        st.session_state.current_chat_id = new_id
+        st.rerun()
+    
+    st.divider()
+    st.subheader("Recientes")
+    for chat_id in reversed(list(st.session_state.all_chats.keys())):
+        if st.button(chat_id, key=chat_id):
+            st.session_state.current_chat_id = chat_id
+            st.rerun()
+
+# --- FUNCIONES DE DOCUMENTOS ---
 def crear_pdf(texto):
     pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.add_page(); pdf.set_font("Arial", size=12)
     pdf.multi_cell(0, 10, txt=texto.encode('latin-1', 'replace').decode('latin-1'))
     return pdf.output(dest='S').encode('latin-1')
 
 def crear_word(texto):
-    doc = Document()
-    doc.add_paragraph(texto)
-    bio = io.BytesIO()
-    doc.save(bio)
-    return bio.getvalue()
+    doc = Document(); doc.add_paragraph(texto)
+    bio = io.BytesIO(); doc.save(bio); return bio.getvalue()
 
-# --- UI: CHAT HISTORIAL ---
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "chart" in message:
-            st.plotly_chart(message["chart"], use_container_width=True)
-        if "file" in message:
-            st.download_button(**message["file"])
+# --- PANTALLA PRINCIPAL DE CHAT ---
+st.title(st.session_state.current_chat_id)
 
-# --- UI: BARRA DE ENTRADA (ESTILO GEMINI) ---
-# Usamos un contenedor en la parte inferior
+# Mostrar mensajes del chat actual
+current_messages = st.session_state.all_chats[st.session_state.current_chat_id]
+for msg in current_messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if "chart" in msg: st.plotly_chart(msg["chart"])
+        if "file" in msg: st.download_button(**msg["file"])
+
+# --- BARRA DE ENTRADA CON CLIP ---
 with st.container():
-    c1, c2 = st.columns([0.1, 0.9])
+    # Esta fila simula la barra de entrada de Gemini
+    c1, c2 = st.columns([0.08, 0.92])
     with c1:
-        archivo_subido = st.file_uploader("📎", type=["pdf", "png", "jpg", "csv", "xlsx", "txt"], label_visibility="collapsed")
+        archivo = st.file_uploader("📎", type=["pdf", "png", "jpg", "csv", "xlsx", "txt"], label_visibility="collapsed")
     with c2:
-        prompt = st.chat_input("Escribe tu consulta o pide un gráfico/archivo...")
+        prompt = st.chat_input("Escribe tu mensaje...")
 
 if prompt:
-    # 1. Procesar contexto de archivos subidos
     contexto_archivo = ""
     img_b64 = None
-    if archivo_subido:
-        if "image" in archivo_subido.type:
-            img_b64 = f"data:{archivo_subido.type};base64,{base64.b64encode(archivo_subido.read()).decode()}"
-        elif "pdf" in archivo_subido.type:
-            reader = PyPDF2.PdfReader(archivo_subido)
+    
+    if archivo:
+        if "image" in archivo.type:
+            img_b64 = f"data:{archivo.type};base64,{base64.b64encode(archivo.read()).decode()}"
+        elif "pdf" in archivo.type:
+            reader = PyPDF2.PdfReader(archivo)
             contexto_archivo = "Contenido PDF: " + " ".join([p.extract_text() for p in reader.pages])
-        elif "csv" in archivo_subido.type or "sheet" in archivo_subido.type:
-            df_input = pd.read_csv(archivo_subido) if "csv" in archivo_subido.type else pd.read_excel(archivo_subido)
-            contexto_archivo = f"Datos del archivo: {df_input.head(10).to_dict()}"
 
-    # 2. Mostrar mensaje del usuario
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Guardar mensaje del usuario
+    current_messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 3. Respuesta de la IA
+    # Respuesta de la IA
     with st.chat_message("assistant"):
         modelo = "llama-3.2-11b-vision-preview" if img_b64 else "llama-3.3-70b-versatile"
+        sys_prompt = f"Eres Gemini, una IA avanzada de Google. Hoy es {datetime.now()}. {contexto_archivo}. Si piden gráficos usa [DATA: {{\"item\": valor}}]"
         
-        sys_prompt = f"""Eres una IA avanzada. Hoy es {datetime.now()}. 
-        Si te piden un gráfico, inventa datos coherentes si no hay, y responde SIEMPRE al final con el formato:
-        [DATA: {{"Etiqueta1": 10, "Etiqueta2": 20}}]
-        Si piden un archivo, responde normal y yo generaré el botón."""
-
-        # Construir mensajes
-        msgs = [{"role": "system", "content": sys_prompt}]
+        msgs_api = [{"role": "system", "content": sys_prompt}]
         if img_b64:
-            msgs.append({"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img_b64}}]})
+            msgs_api.append({"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img_b64}}]})
         else:
-            for m in st.session_state.messages[-5:]:
-                msgs.append({"role": m["role"], "content": m["content"]})
+            for m in current_messages[-5:]: msgs_api.append({"role": m["role"], "content": m["content"]})
 
-        # Streaming
-        placeholder = st.empty()
-        full_res = ""
-        completion = client.chat.completions.create(model=modelo, messages=msgs, stream=True)
+        placeholder = st.empty(); full_res = ""
+        completion = client.chat.completions.create(model=modelo, messages=msgs_api, stream=True)
+        
         for chunk in completion:
             if chunk.choices[0].delta.content:
                 full_res += chunk.choices[0].delta.content
                 placeholder.markdown(full_res + "▌")
         placeholder.markdown(full_res)
 
+        # Empaquetar respuesta
         new_msg = {"role": "assistant", "content": full_res}
 
-        # --- LÓGICA DE GRÁFICOS ---
+        # Gráficos dinámicos
         if "[DATA:" in full_res:
             try:
                 import json
-                data_str = full_res.split("[DATA:")[1].split("]")[0]
-                data_json = json.loads(data_str)
-                fig = px.pie(names=list(data_json.keys()), values=list(data_json.values()), title="Gráfico Generado")
-                st.plotly_chart(fig)
-                new_msg["chart"] = fig
+                data_json = json.loads(full_res.split("[DATA:")[1].split("]")[0])
+                fig = px.pie(names=list(data_json.keys()), values=list(data_json.values()), title="Análisis de Datos")
+                st.plotly_chart(fig); new_msg["chart"] = fig
             except: pass
 
-        # --- LÓGICA DE ARCHIVOS ---
+        # Generación de archivos por texto
         p_low = prompt.lower()
         if "pdf" in p_low:
-            new_msg["file"] = {"label": "📥 Descargar PDF", "data": crear_pdf(full_res), "file_name": "archivo.pdf", "mime": "application/pdf"}
-        elif "word" in p_low or "docx" in p_low:
-            new_msg["file"] = {"label": "📥 Descargar Word", "data": crear_word(full_res), "file_name": "archivo.docx", "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
-        elif "excel" in p_low:
-            df = pd.DataFrame([{"Contenido": full_res}])
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False)
-            new_msg["file"] = {"label": "📥 Descargar Excel", "data": output.getvalue(), "file_name": "datos.xlsx", "mime": "application/vnd.ms-excel"}
-
-        if "file" in new_msg:
-            st.download_button(**new_msg["file"])
+            new_msg["file"] = {"label": "📥 Bajar PDF", "data": crear_pdf(full_res), "file_name": "gemini_doc.pdf"}
+        elif "word" in p_low:
+            new_msg["file"] = {"label": "📥 Bajar Word", "data": crear_word(full_res), "file_name": "gemini_doc.docx"}
+            
+        if "file" in new_msg: st.download_button(**new_msg["file"])
         
-        st.session_state.messages.append(new_msg)
+        current_messages.append(new_msg)
