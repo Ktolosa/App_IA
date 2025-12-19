@@ -1,141 +1,124 @@
 import streamlit as st
 from groq import Groq
 import base64
-import pandas as pd
-import plotly.express as px
 from datetime import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Gemini Pro", page_icon="✨", layout="wide")
+# --- 1. CONFIGURACIÓN Y ESTILO GEMINI ---
+st.set_page_config(page_title="Gemini", page_icon="✨", layout="wide")
 
-# --- CSS RADICAL PARA INTERFAZ LIMPIA ---
 st.markdown("""
     <style>
-    /* 1. Ocultar absolutamente todo el texto del cargador */
+    /* Ocultar textos del cargador de archivos */
     [data-testid="stFileUploader"] section { padding: 0 !important; min-height: 0 !important; border: none !important; }
     [data-testid="stFileUploader"] label, [data-testid="stFileUploader"] small, 
-    [data-testid="stFileUploader"] div, [data-testid="stMarkdownContainer"] { 
-        display: none !important; 
-    }
+    [data-testid="stFileUploader"] div[data-testid="stMarkdownContainer"] { display: none !important; }
     
-    /* 2. Convertir el botón en un círculo pequeño con clip */
+    /* Estilizar el botón para que sea solo el clip */
     [data-testid="stFileUploader"] button {
-        border: 1px solid #dcdcdc !important;
-        background-color: white !important;
+        border: none !important;
+        background-color: #f0f2f6 !important;
         border-radius: 50% !important;
         color: transparent !important;
-        width: 38px !important;
-        height: 38px !important;
-        overflow: hidden !important;
+        width: 40px !important;
+        height: 40px !important;
     }
     [data-testid="stFileUploader"] button::after {
         content: '📎';
-        color: #5f6368;
-        font-size: 18px;
+        color: #444746;
+        font-size: 20px;
         position: absolute;
-        top: 50%;
-        left: 50%;
+        top: 50%; left: 50%;
         transform: translate(-50%, -50%);
     }
 
-    /* 3. Fijar la barra de chat AL FONDO */
-    div[data-testid="stForm"] {
-        border: none !important;
-        padding: 0 !important;
+    /* Fijar la barra de entrada al fondo de forma limpia */
+    .footer-container {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: white;
+        padding: 20px 100px;
+        z-index: 1000;
     }
     
-    .stChatFloatingInputContainer {
-        position: fixed !important;
-        bottom: 20px !important;
-        padding: 10px 0 !important;
-        background: white !important;
-    }
-
-    /* 4. Estilo de los globos de texto */
-    .stChatMessage {
-        background-color: #f0f2f6 !important;
-        border-radius: 15px !important;
-        margin-bottom: 10px !important;
+    /* Ajustar el área de mensajes para que no se tape */
+    .main-chat-container {
+        margin-bottom: 120px;
+        max-width: 850px;
+        margin-left: auto;
+        margin-right: auto;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- INICIALIZACIÓN ---
+# --- 2. LÓGICA DE SESIÓN (HISTORIAL) ---
+if "chats" not in st.session_state:
+    st.session_state.chats = {"Nuevo Chat": []}
+if "active_chat" not in st.session_state:
+    st.session_state.active_chat = "Nuevo Chat"
+
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-if "all_chats" not in st.session_state:
-    st.session_state.all_chats = {"Chat 1": []}
-if "current_chat" not in st.session_state:
-    st.session_state.current_chat = "Chat 1"
-
-# --- SIDEBAR (HISTORIAL) ---
+# --- 3. BARRA LATERAL (GEMINI STYLE) ---
 with st.sidebar:
     st.title("✨ Gemini")
-    if st.button("➕ Nuevo Chat", use_container_width=True):
-        new_id = f"Chat {len(st.session_state.all_chats) + 1}"
-        st.session_state.all_chats[new_id] = []
-        st.session_state.current_chat = new_id
+    if st.button("➕ Nuevo chat", use_container_width=True):
+        nuevo_nombre = f"Chat {len(st.session_state.chats) + 1}"
+        st.session_state.chats[nuevo_nombre] = []
+        st.session_state.active_chat = nuevo_nombre
         st.rerun()
+    
     st.divider()
-    for chat_id in reversed(list(st.session_state.all_chats.keys())):
-        if st.button(chat_id, key=f"nav_{chat_id}"):
-            st.session_state.current_chat = chat_id
+    for chat_name in reversed(list(st.session_state.chats.keys())):
+        if st.button(chat_name, key=chat_name, use_container_width=True):
+            st.session_state.active_chat = chat_name
             st.rerun()
 
-# --- ÁREA DE MENSAJES ---
-# Contenedor para que el scroll funcione bien y no tape la barra
-chat_placeholder = st.container()
-with chat_placeholder:
-    for msg in st.session_state.all_chats[st.session_state.current_chat]:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if "chart" in msg: st.plotly_chart(msg["chart"])
+# --- 4. ÁREA DE CHAT ---
+st.markdown('<div class="main-chat-container">', unsafe_allow_html=True)
+for msg in st.session_state.chats[st.session_state.active_chat]:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+st.markdown('</div>', unsafe_allow_html=True)
 
-# Espacio amortiguador para que el chat no se meta debajo de la barra fija
-st.write("<div style='height: 120px;'></div>", unsafe_allow_html=True)
+# --- 5. BARRA INFERIOR FIJA ---
+# Usamos un contenedor vacío para empujar el contenido
+st.write("<br><br><br>", unsafe_allow_html=True)
 
-# --- BARRA DE ENTRADA (POSICIONADA ABAJO) ---
-# Usamos una columna para alinear el clip y el texto perfectamente
-footer = st.container()
-with footer:
-    col_icon, col_input = st.columns([0.05, 0.95])
-    with col_icon:
-        # El CSS arriba hace que esto sea SOLO el clip
-        archivo = st.file_uploader("", type=["pdf", "png", "jpg", "csv", "xlsx", "txt"], label_visibility="collapsed")
-    with col_input:
-        prompt = st.chat_input("Escribe tu mensaje...")
-
-# --- PROCESAMIENTO ---
-if prompt:
-    st.session_state.all_chats[st.session_state.current_chat].append({"role": "user", "content": prompt})
+with st.container():
+    # Creamos columnas para el clip y el texto
+    col_clip, col_input = st.columns([0.05, 0.95])
     
+    with col_clip:
+        # El CSS arriba lo convierte en solo el clip
+        archivo = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv", "xlsx"], label_visibility="collapsed")
+    
+    with col_input:
+        prompt = st.chat_input("Escribe tu mensaje aquí...")
+
+# --- 6. PROCESAMIENTO DE RESPUESTA ---
+if prompt:
+    # Guardar mensaje del usuario
+    st.session_state.chats[st.session_state.active_chat].append({"role": "user", "content": prompt})
+    
+    # Generar respuesta
     with st.chat_message("assistant"):
-        # Detectar si hay archivo para usar modelo Vision o Texto
-        modelo = "llama-3.3-70b-versatile" 
-        full_res = ""
-        res_box = st.empty()
+        placeholder = st.empty()
+        full_response = ""
         
-        # Llamada a la API
+        # Llamada a Groq (Modelo más potente 70B)
         completion = client.chat.completions.create(
-            model=modelo,
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             stream=True
         )
         
         for chunk in completion:
             if chunk.choices[0].delta.content:
-                full_res += chunk.choices[0].delta.content
-                res_box.markdown(full_res + "▌")
-        res_box.markdown(full_res)
+                full_response += chunk.choices[0].delta.content
+                placeholder.markdown(full_response + "▌")
         
-        # Lógica de Gráficos (Si el usuario los pide)
-        new_msg = {"role": "assistant", "content": full_res}
-        if "gráfico" in prompt.lower() or "pastel" in prompt.lower():
-            # Datos de ejemplo basados en tu prompt anterior
-            data = {"Almacenaje": 30, "Manejo": 20, "Multas": 15, "Aduana": 15, "Otros": 20}
-            fig = px.pie(names=list(data.keys()), values=list(data.values()), hole=0.4, title="Distribución de Tarifas")
-            st.plotly_chart(fig)
-            new_msg["chart"] = fig
-
-        st.session_state.all_chats[st.session_state.current_chat].append(new_msg)
+        placeholder.markdown(full_response)
+        st.session_state.chats[st.session_state.active_chat].append({"role": "assistant", "content": full_response})
         st.rerun()
