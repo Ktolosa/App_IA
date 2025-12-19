@@ -1,4 +1,6 @@
 streamlit
 groq
 PyPDF2
-Pillow
+pandas
+xlsxwriter
+openpyxl
