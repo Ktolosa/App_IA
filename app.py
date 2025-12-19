@@ -55,27 +55,29 @@ if "current_chat" not in st.session_state:
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# --- 3. LÓGICA DE AUTO-SELECCIÓN DE MODELOS ---
+# --- 3. LÓGICA DE AUTO-SELECCIÓN DE MODELOS REAL-TIME ---
 def obtener_modelos_dinamicos(es_vision=False):
-    """Busca en la API de Groq el modelo más apto disponible actualmente."""
+    """Consulta los modelos activos en Groq y selecciona el mejor disponible."""
     try:
-        modelos = client.models.list().data
-        ids = [m.id for m in modelos]
+        modelos_disponibles = [m.id for m in client.models.list().data]
         
         if es_vision:
-            # Prioridad para modelos de visión vigentes
-            for v_model in ["llama-3.2-11b-vision-preview", "llama-3.2-90b-vision-preview"]:
-                if v_model in ids: return v_model
-            # Si no encuentra los específicos, busca cualquiera que contenga 'vision'
-            vision_fallback = [id for id in ids if "vision" in id.lower()]
-            return vision_fallback[0] if vision_fallback else "llama-3.2-11b-vision-preview"
+            # Buscamos modelos que soporten visión (actualmente llama-3.2-11b-vision-preview o similares)
+            vision_models = [m for m in modelos_disponibles if "vision" in m.lower()]
+            if vision_models:
+                # Priorizamos los más nuevos/potentes si hay varios
+                return sorted(vision_models, reverse=True)[0]
         else:
-            # Prioridad para modelos de texto potentes
-            for t_model in ["llama-3.3-70b-versatile", "llama3-70b-8192"]:
-                if t_model in ids: return t_model
-            return ids[0] # Último recurso: el primer modelo disponible
-    except:
-        return "llama-3.3-70b-versatile" # Fallback hardcoded por seguridad
+            # Priorizamos modelos versátiles y potentes para texto (70b o 3.3)
+            text_models = [m for m in modelos_disponibles if "70b" in m.lower() or "versatile" in m.lower()]
+            if text_models:
+                return text_models[0]
+            
+        # Si no hay match específico, devolvemos el primero de la lista que sea de chat
+        return modelos_disponibles[0]
+    except Exception as e:
+        # Fallback de emergencia si la lista falla
+        return "llama-3.3-70b-versatile"
 
 # --- 4. PROCESAMIENTO DE ARCHIVOS ---
 def procesar_archivos(archivos_subidos):
@@ -135,7 +137,7 @@ if prompt:
         placeholder = st.empty()
         full_res = ""
         
-        # BUSCAR MODELO AUTOMÁTICAMENTE
+        # BUSCAR MODELO ACTUALIZADO EN TIEMPO REAL
         modelo_activo = obtener_modelos_dinamicos(es_vision=len(lista_imagenes) > 0)
         
         if len(lista_imagenes) > 0:
@@ -144,7 +146,13 @@ if prompt:
                 content_payload.append({"type": "image_url", "image_url": {"url": img}})
             msgs = [{"role": "user", "content": content_payload}]
         else:
-            msgs = [{"role": "user", "content": f"{contexto_texto}\n\n{prompt}"}]
+            # Enviamos el historial completo para tener memoria
+            msgs = [{"role": "system", "content": "Eres un asistente inteligente. Responde de forma clara."}]
+            for h in history[-6:]: # Enviamos últimos 6 mensajes para contexto
+                msgs.append({"role": h["role"], "content": h["content"]})
+            # Actualizamos el último mensaje con el contexto de los archivos si los hay
+            if contexto_texto:
+                msgs[-1]["content"] = f"{contexto_texto}\n\n{prompt}"
 
         try:
             stream = client.chat.completions.create(model=modelo_activo, messages=msgs, stream=True)
@@ -156,4 +164,4 @@ if prompt:
             history.append({"role": "assistant", "content": full_res})
             st.rerun()
         except Exception as e:
-            st.error(f"Error automático: {e}. Intenta limpiar el chat o recargar.")
+            st.error(f"Error de conexión con Groq: {e}. Intenta recargar la página.")
