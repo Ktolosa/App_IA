@@ -5,13 +5,18 @@ import PyPDF2
 import io
 from datetime import datetime
 
-# --- 1. CONFIGURACIÓN Y CSS (LIMPIEZA TOTAL) ---
+# --- 1. CONFIGURACIÓN Y CSS (ESTILO GEMINI PIXEL-PERFECT) ---
 st.set_page_config(page_title="Gemini Pro", page_icon="✨", layout="wide")
 
 st.markdown("""
     <style>
     header, footer {visibility: hidden;}
+    .main .block-container { max-width: 850px; padding-bottom: 150px; }
+    
+    /* Barra inferior fija */
     .stChatFloatingInputContainer { bottom: 30px !important; background-color: transparent !important; }
+    
+    /* Ocultar textos del cargador y dejar solo el clip */
     [data-testid="stFileUploader"] { position: absolute; left: 10px; top: 10px; width: 42px; z-index: 100; }
     [data-testid="stFileUploader"] section { padding: 0 !important; min-height: 40px !important; border: none !important; }
     [data-testid="stFileUploader"] label, [data-testid="stFileUploader"] small, 
@@ -27,7 +32,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. INICIALIZACIÓN ---
+# --- 2. INICIALIZACIÓN DE ESTADOS ---
 if "chats" not in st.session_state:
     st.session_state.chats = {"Chat 1": []}
 if "current_chat" not in st.session_state:
@@ -35,27 +40,23 @@ if "current_chat" not in st.session_state:
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# --- 3. PROCESAMIENTO DE ARCHIVOS ---
-def procesar_archivo(file):
-    if file is None: return None, None
-    
-    if "image" in file.type:
-        b64_img = base64.b64encode(file.read()).decode()
-        return "image", f"data:{file.type};base64,{b64_img}"
-    
-    elif "pdf" in file.type:
-        pdf_reader = PyPDF2.PdfReader(file)
-        texto = "Contenido del PDF:\n" + "".join([p.extract_text() for p in pdf_reader.pages])
-        return "text", texto
-    
-    elif "audio" in file.type:
-        transcription = client.audio.transcriptions.create(
-            file=(file.name, file.read()),
-            model="whisper-large-v3"
-        )
-        return "text", f"Transcripción de audio: {transcription.text}"
-    
-    return "text", file.read().decode()
+# --- 3. PROCESADOR DE ARCHIVOS ---
+def extraer_contenido(archivo):
+    if archivo is None: return None, None
+    try:
+        if "image" in archivo.type:
+            return "image", f"data:{archivo.type};base64,{base64.b64encode(archivo.read()).decode()}"
+        elif "pdf" in archivo.type:
+            pdf_reader = PyPDF2.PdfReader(archivo)
+            texto = "CONTENIDO DEL PDF ADJUNTO:\n" + "\n".join([p.extract_text() for p in pdf_reader.pages])
+            return "text", texto
+        elif "audio" in archivo.type:
+            transcription = client.audio.transcriptions.create(file=(archivo.name, archivo.read()), model="whisper-large-v3")
+            return "text", f"TRANSCRIPCIÓN DEL AUDIO ADJUNTO: {transcription.text}"
+        else:
+            return "text", f"CONTENIDO DEL ARCHIVO: {archivo.read().decode()}"
+    except Exception as e:
+        return "error", str(e)
 
 # --- 4. SIDEBAR ---
 with st.sidebar:
@@ -67,62 +68,61 @@ with st.sidebar:
         st.rerun()
     st.divider()
     for c in reversed(list(st.session_state.chats.keys())):
-        if st.button(c, key=f"nav_{c}", use_container_width=True):
+        if st.button(c, key=f"n_{c}", use_container_width=True):
             st.session_state.current_chat = c
             st.rerun()
 
-# --- 5. CHAT UI ---
+# --- 5. RENDER CHAT ---
 st.subheader(st.session_state.current_chat)
-chat_actual = st.session_state.chats.get(st.session_state.current_chat, [])
+mensajes = st.session_state.chats[st.session_state.current_chat]
+for m in mensajes:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
 
-for msg in chat_actual:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-# --- 6. INPUT Y LÓGICA ---
+# --- 6. INPUT Y RESPUESTA ---
 with st.container():
-    archivo = st.file_uploader("", type=["pdf", "png", "jpg", "mp3", "wav", "txt"], label_visibility="collapsed")
-    prompt = st.chat_input("Escribe tu mensaje...")
+    archivo_adjunto = st.file_uploader("", type=["pdf", "png", "jpg", "mp3", "wav", "txt", "csv"], label_visibility="collapsed")
+    prompt = st.chat_input("Escribe tu mensaje aquí...")
 
 if prompt:
-    # 1. Mostrar mensaje del usuario inmediatamente
-    chat_actual.append({"role": "user", "content": prompt})
+    # Agregar mensaje usuario
+    mensajes.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Procesar archivo si existe
-    tipo_adjunto, contenido_adjunto = procesar_archivo(archivo)
+    # Procesar el archivo ANTES de llamar a la IA
+    tipo, contenido = extraer_contenido(archivo_adjunto)
 
-    # 3. Respuesta de la IA
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_res = ""
         
-        # Construir mensajes para la API
-        mensajes_api = [{"role": "system", "content": "Eres Gemini. Si hay contexto de archivos, úsalo."}]
-        
-        # Si es imagen, usamos modelo Vision
-        if tipo_adjunto == "image":
+        # Lógica de mensajes para la API
+        if tipo == "image":
             modelo = "llama-3.2-11b-vision-preview"
-            mensajes_api.append({
-                "role": "user",
-                "content": [
+            payload = [
+                {"role": "system", "content": "Eres Gemini. Analiza la imagen enviada."},
+                {"role": "user", "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": contenido_adjunto}}
-                ]
-            })
+                    {"type": "image_url", "image_url": {"url": contenido}}
+                ]}
+            ]
         else:
             modelo = "llama-3.3-70b-versatile"
-            # Si hay texto de PDF/Audio, lo inyectamos
-            texto_final = f"{contenido_adjunto}\n\nPregunta: {prompt}" if contenido_adjunto else prompt
-            mensajes_api.append({"role": "user", "content": texto_final})
+            contexto = f"{contenido}\n\n" if contenido else ""
+            payload = [
+                {"role": "system", "content": "Eres Gemini. Usa el contenido del archivo si existe."},
+                {"role": "user", "content": f"{contexto}Pregunta: {prompt}"}
+            ]
 
-        # Streaming
-        completion = client.chat.completions.create(model=modelo, messages=mensajes_api, stream=True)
-        for chunk in completion:
-            if chunk.choices[0].delta.content:
-                full_res += chunk.choices[0].delta.content
-                placeholder.markdown(full_res + "▌")
-        
-        placeholder.markdown(full_res)
-        chat_actual.append({"role": "assistant", "content": full_res})
+        # Llamada a Groq
+        try:
+            stream = client.chat.completions.create(model=modelo, messages=payload, stream=True)
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    full_res += chunk.choices[0].delta.content
+                    placeholder.markdown(full_res + "▌")
+            placeholder.markdown(full_res)
+            mensajes.append({"role": "assistant", "content": full_res})
+        except Exception as e:
+            st.error(f"Error: {e}")
