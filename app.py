@@ -2,14 +2,15 @@ import streamlit as st
 from groq import Groq
 import base64
 import PyPDF2
+from datetime import datetime
 
-# --- 1. CONFIGURACIÓN Y CSS (ALINEACIÓN IZQUIERDA ABSOLUTA) ---
-st.set_page_config(page_title="Gemini Ultra", page_icon="✨", layout="wide")
+# --- 1. CONFIGURACIÓN Y CSS (ALINEACIÓN IZQUIERDA Y MULTIPÍLDORAS) ---
+st.set_page_config(page_title="Gemini Ultra Multi", page_icon="✨", layout="wide")
 
 st.markdown("""
     <style>
     header, footer {visibility: hidden;}
-    .main .block-container { max-width: 850px; padding-bottom: 150px; }
+    .main .block-container { max-width: 850px; padding-bottom: 200px; }
 
     /* CONTENEDOR DE ENTRADA FIJO */
     .stChatFloatingInputContainer {
@@ -20,20 +21,18 @@ st.markdown("""
     /* POSICIONAR EL CARGADOR DENTRO DE LA BARRA A LA IZQUIERDA */
     [data-testid="stFileUploader"] {
         position: absolute;
-        left: 20px; /* Distancia desde el borde izquierdo */
-        top: 10px;  /* Ajuste para centrar verticalmente con el texto */
+        left: 20px;
+        top: 10px;
         width: 40px;
         z-index: 1000;
     }
     
-    /* Eliminar todos los textos y marcos del cargador */
     [data-testid="stFileUploader"] section { padding: 0 !important; min-height: 0 !important; border: none !important; background: transparent !important; }
     [data-testid="stFileUploader"] label, [data-testid="stFileUploader"] small, 
     [data-testid="stFileUploader"] div, [data-testid="stFileUploaderDropzoneInstructions"] { 
         display: none !important; 
     }
 
-    /* Convertir el botón en el círculo con el clip */
     [data-testid="stFileUploader"] button {
         background-color: transparent !important;
         color: transparent !important;
@@ -52,26 +51,34 @@ st.markdown("""
         visibility: visible;
     }
 
-    /* ESTILO DE LA BARRA DE TEXTO (GEMINI STYLE) */
+    /* ESTILO DE LA BARRA DE TEXTO */
     .stChatInput textarea {
         border-radius: 28px !important;
         background-color: #f0f2f6 !important;
         border: none !important;
-        padding-left: 55px !important; /* IMPORTANTE: Espacio para que el texto no tape el clip */
+        padding-left: 55px !important;
         padding-top: 12px !important;
     }
 
-    /* Píldora de archivo (Estilo flotante sobre la barra) */
+    /* CONTENEDOR DE PÍLDORAS DE ARCHIVOS (Múltiples) */
+    .pill-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-left: 55px;
+        margin-bottom: 8px;
+    }
+
     .file-pill {
         background-color: #e8f0fe;
         color: #1a73e8;
         padding: 4px 12px;
         border-radius: 12px;
-        font-size: 0.85rem;
-        margin-left: 55px;
-        margin-bottom: 8px;
+        font-size: 0.82rem;
         border: 1px solid #c2e7ff;
-        display: inline-block;
+        display: flex;
+        align-items: center;
+        gap: 5px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -84,7 +91,26 @@ if "current_chat" not in st.session_state:
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# --- 3. BARRA LATERAL ---
+# --- 3. PROCESADOR DE ARCHIVOS MÚLTIPLES ---
+def procesar_archivos(lista_archivos):
+    contexto_total = ""
+    imagenes_b64 = [] # Groq Vision soporta múltiples imágenes en una llamada
+    
+    for archivo in lista_archivos:
+        try:
+            if "image" in archivo.type:
+                b64 = base64.b64encode(archivo.read()).decode()
+                imagenes_b64.append(f"data:{archivo.type};base64,{b64}")
+            elif "pdf" in archivo.type:
+                reader = PyPDF2.PdfReader(archivo)
+                contexto_total += f"\n[Archivo: {archivo.name}]\n" + " ".join([p.extract_text() for p in reader.pages])
+            else:
+                contexto_total += f"\n[Archivo: {archivo.name}]\n" + archivo.read().decode()
+        except:
+            pass
+    return contexto_total, imagenes_b64
+
+# --- 4. SIDEBAR ---
 with st.sidebar:
     st.title("✨ Gemini")
     if st.button("➕ Nuevo chat", use_container_width=True):
@@ -98,7 +124,7 @@ with st.sidebar:
             st.session_state.current_chat = c
             st.rerun()
 
-# --- 4. RENDERIZADO DE CHAT ---
+# --- 5. RENDER CHAT ---
 st.subheader(st.session_state.current_chat)
 history = st.session_state.chats[st.session_state.current_chat]
 
@@ -106,51 +132,51 @@ for m in history:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-# --- 5. BARRA INFERIOR ( CLIP + INPUT ) ---
+# --- 6. BARRA INFERIOR MULTI-ARCHIVO ---
 with st.container():
-    # El archivo subido
-    archivo = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv"], label_visibility="collapsed")
+    # accept_multiple_files=True permite la carga masiva
+    archivos = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv"], 
+                                 label_visibility="collapsed", accept_multiple_files=True)
     
-    if archivo:
-        st.markdown(f'<div class="file-pill">📄 {archivo.name}</div>', unsafe_allow_html=True)
+    if archivos:
+        st.markdown('<div class="pill-container">', unsafe_allow_html=True)
+        for f in archivos:
+            st.markdown(f'<div class="file-pill">📄 {f.name}</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     
     prompt = st.chat_input("Escribe tu mensaje...")
 
-# --- 6. PROCESAMIENTO ---
+# --- 7. LÓGICA DE RESPUESTA ---
 if prompt:
     history.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Extraer contenido del archivo
-    contexto = ""
-    img_b64 = None
-    if archivo:
-        if "image" in archivo.type:
-            img_b64 = f"data:{archivo.type};base64,{base64.b64encode(archivo.read()).decode()}"
-        elif "pdf" in archivo.type:
-            reader = PyPDF2.PdfReader(archivo)
-            contexto = "Contenido PDF: " + " ".join([p.extract_text() for p in reader.pages])
-        else:
-            contexto = f"Contenido del archivo: {archivo.read().decode()}"
+    contexto_texto, lista_imgs = procesar_archivos(archivos)
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_res = ""
-        modelo = "llama-3.2-11b-vision-preview" if img_b64 else "llama-3.3-70b-versatile"
         
-        # Preparar mensajes
-        if img_b64:
-            msgs = [{"role": "user", "content": [{"type":"text","text":prompt}, {"type":"image_url","image_url":{"url":img_b64}}]}]
+        # Si hay imágenes, usamos el modelo Vision
+        if lista_imgs:
+            modelo = "llama-3.2-11b-vision-preview"
+            contenido_multi = [{"type": "text", "text": f"{contexto_texto}\n\n{prompt}"}]
+            for img in lista_imgs:
+                contenido_multi.append({"type": "image_url", "image_url": {"url": img}})
+            msgs = [{"role": "user", "content": contenido_multi}]
         else:
-            msgs = [{"role": "user", "content": f"{contexto}\n\n{prompt}"}]
+            modelo = "llama-3.3-70b-versatile"
+            msgs = [{"role": "user", "content": f"{contexto_texto}\n\n{prompt}"}]
 
-        completion = client.chat.completions.create(model=modelo, messages=msgs, stream=True)
-        for chunk in completion:
-            if chunk.choices[0].delta.content:
-                full_res += chunk.choices[0].delta.content
-                placeholder.markdown(full_res + "▌")
-        
-        placeholder.markdown(full_res)
-        history.append({"role": "assistant", "content": full_res})
-        st.rerun()
+        try:
+            completion = client.chat.completions.create(model=modelo, messages=msgs, stream=True)
+            for chunk in completion:
+                if chunk.choices[0].delta.content:
+                    full_res += chunk.choices[0].delta.content
+                    placeholder.markdown(full_res + "▌")
+            placeholder.markdown(full_res)
+            history.append({"role": "assistant", "content": full_res})
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error de conexión: {e}")
