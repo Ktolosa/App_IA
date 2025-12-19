@@ -3,122 +3,145 @@ from groq import Groq
 import base64
 from datetime import datetime
 
-# --- 1. CONFIGURACIÓN Y ESTILO GEMINI ---
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Gemini", page_icon="✨", layout="wide")
 
+# --- 2. CSS AVANZADO (REDiseño de Interfaz) ---
 st.markdown("""
     <style>
-    /* Ocultar textos del cargador de archivos */
+    /* Ocultar elementos molestos de Streamlit */
+    #MainMenu, footer, header {visibility: hidden;}
+    .stApp { background-color: #ffffff; }
+
+    /* Contenedor del Chat (Centro) */
+    .main-chat {
+        max-width: 800px;
+        margin: 0 auto;
+        padding-bottom: 150px;
+    }
+
+    /* BURBUJAS DE MENSAJE ESTILO GEMINI */
+    .stChatMessage {
+        background-color: transparent !important;
+        border: none !important;
+        margin-top: 20px !important;
+    }
+    
+    /* BARRA INFERIOR (ISLA FLOTANTE) */
+    .stChatFloatingInputContainer {
+        bottom: 40px !important;
+        background-color: transparent !important;
+        border: none !important;
+    }
+    
+    div[data-testid="stForm"] {
+        border: 1px solid #e0e0e0 !important;
+        border-radius: 28px !important;
+        padding: 8px 20px !important;
+        background-color: #f0f2f6 !important;
+        box-shadow: 0 1px 6px rgba(32,33,36,.28);
+    }
+
+    /* EL CLIP (SOLO ICONO) */
+    [data-testid="stFileUploader"] {
+        width: 40px;
+        position: absolute;
+        left: 10px;
+        top: 5px;
+        z-index: 10;
+    }
     [data-testid="stFileUploader"] section { padding: 0 !important; min-height: 0 !important; border: none !important; }
     [data-testid="stFileUploader"] label, [data-testid="stFileUploader"] small, 
     [data-testid="stFileUploader"] div[data-testid="stMarkdownContainer"] { display: none !important; }
     
-    /* Estilizar el botón para que sea solo el clip */
     [data-testid="stFileUploader"] button {
-        border: none !important;
-        background-color: #f0f2f6 !important;
-        border-radius: 50% !important;
+        background: transparent !important;
         color: transparent !important;
-        width: 40px !important;
-        height: 40px !important;
+        border: none !important;
+        font-size: 0 !important;
     }
     [data-testid="stFileUploader"] button::after {
         content: '📎';
         color: #444746;
-        font-size: 20px;
-        position: absolute;
-        top: 50%; left: 50%;
-        transform: translate(-50%, -50%);
+        font-size: 22px;
+        visibility: visible;
     }
 
-    /* Fijar la barra de entrada al fondo de forma limpia */
-    .footer-container {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: white;
-        padding: 20px 100px;
-        z-index: 1000;
-    }
-    
-    /* Ajustar el área de mensajes para que no se tape */
-    .main-chat-container {
-        margin-bottom: 120px;
-        max-width: 850px;
-        margin-left: auto;
-        margin-right: auto;
+    /* AJUSTE DEL TEXTO DE ENTRADA */
+    .stChatInput textarea {
+        padding-left: 45px !important;
+        background-color: transparent !important;
+        border: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. LÓGICA DE SESIÓN (HISTORIAL) ---
+# --- 3. LÓGICA DE DATOS ---
 if "chats" not in st.session_state:
-    st.session_state.chats = {"Nuevo Chat": []}
+    st.session_state.chats = {"Chat Inicial": []}
 if "active_chat" not in st.session_state:
-    st.session_state.active_chat = "Nuevo Chat"
+    st.session_state.active_chat = "Chat Inicial"
 
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+# Inicializar Groq (Asegúrate de tener la KEY en secrets)
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except:
+    st.error("Error: Configura GROQ_API_KEY en los Secrets de Streamlit.")
+    st.stop()
 
-# --- 3. BARRA LATERAL (GEMINI STYLE) ---
+# --- 4. SIDEBAR (HISTORIAL) ---
 with st.sidebar:
-    st.title("✨ Gemini")
+    st.markdown("<h2 style='text-align: center;'>✨ Gemini</h2>", unsafe_allow_html=True)
     if st.button("➕ Nuevo chat", use_container_width=True):
-        nuevo_nombre = f"Chat {len(st.session_state.chats) + 1}"
-        st.session_state.chats[nuevo_nombre] = []
-        st.session_state.active_chat = nuevo_nombre
+        nuevo_id = f"Chat {datetime.now().strftime('%H:%M:%S')}"
+        st.session_state.chats[nuevo_id] = []
+        st.session_state.active_chat = nuevo_id
         st.rerun()
     
     st.divider()
-    for chat_name in reversed(list(st.session_state.chats.keys())):
-        if st.button(chat_name, key=chat_name, use_container_width=True):
-            st.session_state.active_chat = chat_name
+    st.write("Recientes")
+    for chat_id in reversed(list(st.session_state.chats.keys())):
+        if st.button(chat_id, key=chat_id, use_container_width=True):
+            st.session_state.active_chat = chat_id
             st.rerun()
 
-# --- 4. ÁREA DE CHAT ---
-st.markdown('<div class="main-chat-container">', unsafe_allow_html=True)
+# --- 5. VISUALIZACIÓN DE MENSAJES ---
+st.markdown('<div class="main-chat">', unsafe_allow_html=True)
 for msg in st.session_state.chats[st.session_state.active_chat]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 5. BARRA INFERIOR FIJA ---
-# Usamos un contenedor vacío para empujar el contenido
-st.write("<br><br><br>", unsafe_allow_html=True)
-
+# --- 6. BARRA DE ENTRADA (CLIP + INPUT) ---
+# Colocamos el uploader y el input "encimados" visualmente con CSS
 with st.container():
-    # Creamos columnas para el clip y el texto
-    col_clip, col_input = st.columns([0.05, 0.95])
-    
-    with col_clip:
-        # El CSS arriba lo convierte en solo el clip
-        archivo = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv", "xlsx"], label_visibility="collapsed")
-    
+    col_input = st.columns([1])[0]
     with col_input:
+        # El clip se posiciona mediante el CSS de arriba
+        archivo = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv", "xlsx"], label_visibility="collapsed")
         prompt = st.chat_input("Escribe tu mensaje aquí...")
 
-# --- 6. PROCESAMIENTO DE RESPUESTA ---
+# --- 7. PROCESAMIENTO ---
 if prompt:
-    # Guardar mensaje del usuario
+    # Agregar mensaje de usuario
     st.session_state.chats[st.session_state.active_chat].append({"role": "user", "content": prompt})
     
-    # Generar respuesta
     with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_response = ""
+        res_placeholder = st.empty()
+        full_res = ""
         
-        # Llamada a Groq (Modelo más potente 70B)
-        completion = client.chat.completions.create(
+        # Stream de Groq
+        stream = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            stream=True
+            stream=True,
         )
         
-        for chunk in completion:
+        for chunk in stream:
             if chunk.choices[0].delta.content:
-                full_response += chunk.choices[0].delta.content
-                placeholder.markdown(full_response + "▌")
+                full_res += chunk.choices[0].delta.content
+                res_placeholder.markdown(full_res + "▌")
         
-        placeholder.markdown(full_response)
-        st.session_state.chats[st.session_state.active_chat].append({"role": "assistant", "content": full_response})
+        res_placeholder.markdown(full_res)
+        st.session_state.chats[st.session_state.active_chat].append({"role": "assistant", "content": full_res})
         st.rerun()
