@@ -1,152 +1,128 @@
 import streamlit as st
 from groq import Groq
 import base64
+import PyPDF2
+import io
+from datetime import datetime
 
-# --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Gemini Ultra", page_icon="✨", layout="wide")
+# --- 1. CONFIGURACIÓN Y CSS (LIMPIEZA TOTAL) ---
+st.set_page_config(page_title="Gemini Pro", page_icon="✨", layout="wide")
 
-# --- 2. CSS AGRESIVO (ELIMINA TODO EL TEXTO DEL CLIP) ---
 st.markdown("""
     <style>
     header, footer {visibility: hidden;}
-    
-    /* Centrar contenido */
-    .main .block-container { max-width: 850px; padding-bottom: 150px; }
-
-    /* BARRA INFERIOR */
-    .stChatFloatingInputContainer {
-        bottom: 30px !important;
-        background-color: transparent !important;
-    }
-
-    /* OCULTAR TEXTOS DEL CARGADOR */
-    [data-testid="stFileUploader"] {
-        position: absolute;
-        left: 10px;
-        top: 10px;
-        width: 42px;
-        z-index: 100;
-    }
-    
-    [data-testid="stFileUploader"] section {
-        padding: 0 !important;
-        min-height: 40px !important;
-        border: none !important;
-    }
-
-    /* Desaparecer textos de 'Drag and drop', 'Limit', etc. */
-    [data-testid="stFileUploader"] label, 
-    [data-testid="stFileUploader"] small, 
-    [data-testid="stFileUploader"] div,
-    [data-testid="stFileUploaderDropzoneInstructions"] {
-        display: none !important;
-    }
-
-    /* ESTILIZAR EL BOTÓN COMO UN CLIP CIRCULAR */
+    .stChatFloatingInputContainer { bottom: 30px !important; background-color: transparent !important; }
+    [data-testid="stFileUploader"] { position: absolute; left: 10px; top: 10px; width: 42px; z-index: 100; }
+    [data-testid="stFileUploader"] section { padding: 0 !important; min-height: 40px !important; border: none !important; }
+    [data-testid="stFileUploader"] label, [data-testid="stFileUploader"] small, 
+    [data-testid="stFileUploader"] div, [data-testid="stFileUploaderDropzoneInstructions"] { display: none !important; }
     [data-testid="stFileUploader"] button {
-        width: 40px !important;
-        height: 40px !important;
-        border-radius: 50% !important;
-        background-color: #f0f2f6 !important;
-        color: transparent !important; /* Esconde 'Browse files' */
-        border: none !important;
-        display: flex !important;
-        align-items: center;
-        justify-content: center;
+        width: 40px !important; height: 40px !important; border-radius: 50% !important;
+        background-color: #f0f2f6 !important; color: transparent !important; border: none !important;
     }
-
-    /* Icono de Clip */
     [data-testid="stFileUploader"]::before {
-        content: '📎';
-        position: absolute;
-        left: 10px;
-        top: 8px;
-        font-size: 20px;
-        z-index: 101;
-        pointer-events: none;
-        color: #444746;
+        content: '📎'; position: absolute; left: 10px; top: 8px; font-size: 20px; z-index: 101; pointer-events: none;
     }
-
-    /* Caja de texto estilo Gemini */
-    .stChatInput textarea {
-        border-radius: 28px !important;
-        padding-left: 55px !important;
-        background-color: #f0f2f6 !important;
-        border: none !important;
-    }
+    .stChatInput textarea { border-radius: 28px !important; padding-left: 55px !important; background-color: #f0f2f6 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. INICIALIZACIÓN SEGURA (EVITA EL KEYERROR) ---
+# --- 2. INICIALIZACIÓN ---
 if "chats" not in st.session_state:
     st.session_state.chats = {"Chat 1": []}
+if "current_chat" not in st.session_state:
+    st.session_state.current_chat = "Chat 1"
 
-if "current_chat" not in st.session_state or st.session_state.current_chat not in st.session_state.chats:
-    st.session_state.current_chat = list(st.session_state.chats.keys())[0]
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# Conexión Groq
-try:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except Exception:
-    st.error("Error: Asegúrate de configurar GROQ_API_KEY en los Secrets.")
-    st.stop()
-
-# --- 4. SIDEBAR (HISTORIAL) ---
-with st.sidebar:
-    st.markdown("### ✨ Gemini")
-    if st.button("➕ Nuevo chat", use_container_width=True):
-        new_name = f"Chat {len(st.session_state.chats) + 1}"
-        st.session_state.chats[new_name] = []
-        st.session_state.current_chat = new_name
-        st.rerun()
+# --- 3. PROCESAMIENTO DE ARCHIVOS ---
+def procesar_archivo(file):
+    if file is None: return None, None
     
+    if "image" in file.type:
+        b64_img = base64.b64encode(file.read()).decode()
+        return "image", f"data:{file.type};base64,{b64_img}"
+    
+    elif "pdf" in file.type:
+        pdf_reader = PyPDF2.PdfReader(file)
+        texto = "Contenido del PDF:\n" + "".join([p.extract_text() for p in pdf_reader.pages])
+        return "text", texto
+    
+    elif "audio" in file.type:
+        transcription = client.audio.transcriptions.create(
+            file=(file.name, file.read()),
+            model="whisper-large-v3"
+        )
+        return "text", f"Transcripción de audio: {transcription.text}"
+    
+    return "text", file.read().decode()
+
+# --- 4. SIDEBAR ---
+with st.sidebar:
+    st.title("✨ Gemini")
+    if st.button("➕ Nuevo chat", use_container_width=True):
+        name = f"Chat {len(st.session_state.chats) + 1}"
+        st.session_state.chats[name] = []
+        st.session_state.current_chat = name
+        st.rerun()
     st.divider()
-    for chat_id in reversed(list(st.session_state.chats.keys())):
-        # Botón para cambiar de chat
-        if st.button(chat_id, key=f"nav_{chat_id}", use_container_width=True):
-            st.session_state.current_chat = chat_id
+    for c in reversed(list(st.session_state.chats.keys())):
+        if st.button(c, key=f"nav_{c}", use_container_width=True):
+            st.session_state.current_chat = c
             st.rerun()
 
-# --- 5. RENDERIZADO DE CHAT ---
+# --- 5. CHAT UI ---
 st.subheader(st.session_state.current_chat)
-
-# Verificación de seguridad antes de iterar
 chat_actual = st.session_state.chats.get(st.session_state.current_chat, [])
 
 for msg in chat_actual:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- 6. BARRA DE ENTRADA ---
+# --- 6. INPUT Y LÓGICA ---
 with st.container():
-    # El clip se posiciona automáticamente por CSS
-    archivo = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv", "xlsx"], label_visibility="collapsed")
+    archivo = st.file_uploader("", type=["pdf", "png", "jpg", "mp3", "wav", "txt"], label_visibility="collapsed")
     prompt = st.chat_input("Escribe tu mensaje...")
 
-# --- 7. LÓGICA DE RESPUESTA ---
 if prompt:
-    # Agregar mensaje del usuario
-    st.session_state.chats[st.session_state.current_chat].append({"role": "user", "content": prompt})
-    
+    # 1. Mostrar mensaje del usuario inmediatamente
+    chat_actual.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # 2. Procesar archivo si existe
+    tipo_adjunto, contenido_adjunto = procesar_archivo(archivo)
+
+    # 3. Respuesta de la IA
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_res = ""
         
-        # Stream de Groq
-        try:
-            stream = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": m["content"]} for m in st.session_state.chats[st.session_state.current_chat]],
-                stream=True
-            )
-            
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    full_res += chunk.choices[0].delta.content
-                    placeholder.markdown(full_res + "▌")
-            
-            placeholder.markdown(full_res)
-            st.session_state.chats[st.session_state.current_chat].append({"role": "assistant", "content": full_res})
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error en la IA: {e}")
+        # Construir mensajes para la API
+        mensajes_api = [{"role": "system", "content": "Eres Gemini. Si hay contexto de archivos, úsalo."}]
+        
+        # Si es imagen, usamos modelo Vision
+        if tipo_adjunto == "image":
+            modelo = "llama-3.2-11b-vision-preview"
+            mensajes_api.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": contenido_adjunto}}
+                ]
+            })
+        else:
+            modelo = "llama-3.3-70b-versatile"
+            # Si hay texto de PDF/Audio, lo inyectamos
+            texto_final = f"{contenido_adjunto}\n\nPregunta: {prompt}" if contenido_adjunto else prompt
+            mensajes_api.append({"role": "user", "content": texto_final})
+
+        # Streaming
+        completion = client.chat.completions.create(model=modelo, messages=mensajes_api, stream=True)
+        for chunk in completion:
+            if chunk.choices[0].delta.content:
+                full_res += chunk.choices[0].delta.content
+                placeholder.markdown(full_res + "▌")
+        
+        placeholder.markdown(full_res)
+        chat_actual.append({"role": "assistant", "content": full_res})
