@@ -3,52 +3,38 @@ from groq import Groq
 import base64
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Gemini", page_icon="✨", layout="wide")
+st.set_page_config(page_title="Gemini Ultra", page_icon="✨", layout="wide")
 
-# --- 2. CSS AVANZADO (OCULTA TODO EL TEXTO Y ESTILIZA LA BARRA) ---
+# --- 2. CSS AGRESIVO (ELIMINA TODO EL TEXTO DEL CLIP) ---
 st.markdown("""
     <style>
-    /* Ocultar header y footer de Streamlit */
     header, footer {visibility: hidden;}
     
-    /* Contenedor principal de mensajes */
-    .main .block-container {
-        max-width: 850px;
-        padding-bottom: 150px;
-    }
+    /* Centrar contenido */
+    .main .block-container { max-width: 850px; padding-bottom: 150px; }
 
-    /* ESTILO DE LA BARRA INFERIOR (ISLA GEMINI) */
+    /* BARRA INFERIOR */
     .stChatFloatingInputContainer {
         bottom: 30px !important;
         background-color: transparent !important;
     }
-    
-    /* CAJA DE TEXTO REDONDEADA */
-    .stChatInput textarea {
-        border-radius: 28px !important;
-        padding: 15px 15px 15px 50px !important;
-        background-color: #f0f2f6 !important;
-        border: none !important;
-        line-height: 1.5 !important;
-    }
 
-    /* ELIMINAR TEXTOS DEL CARGADOR DE ARCHIVOS POR COMPLETO */
+    /* OCULTAR TEXTOS DEL CARGADOR */
     [data-testid="stFileUploader"] {
         position: absolute;
         left: 10px;
         top: 10px;
-        width: 40px;
+        width: 42px;
         z-index: 100;
     }
     
-    /* Hacemos el cargador invisible pero clickeable */
     [data-testid="stFileUploader"] section {
         padding: 0 !important;
         min-height: 40px !important;
         border: none !important;
-        background: transparent !important;
     }
-    
+
+    /* Desaparecer textos de 'Drag and drop', 'Limit', etc. */
     [data-testid="stFileUploader"] label, 
     [data-testid="stFileUploader"] small, 
     [data-testid="stFileUploader"] div,
@@ -56,91 +42,111 @@ st.markdown("""
         display: none !important;
     }
 
-    /* CREAR EL ICONO DE CLIP SOBRE EL BOTÓN INVISIBLE */
+    /* ESTILIZAR EL BOTÓN COMO UN CLIP CIRCULAR */
     [data-testid="stFileUploader"] button {
         width: 40px !important;
         height: 40px !important;
         border-radius: 50% !important;
-        background-color: transparent !important;
-        color: transparent !important;
+        background-color: #f0f2f6 !important;
+        color: transparent !important; /* Esconde 'Browse files' */
         border: none !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
     }
 
+    /* Icono de Clip */
     [data-testid="stFileUploader"]::before {
         content: '📎';
         position: absolute;
         left: 10px;
         top: 8px;
         font-size: 20px;
-        pointer-events: none; /* Permite que el click pase al botón de abajo */
+        z-index: 101;
+        pointer-events: none;
         color: #444746;
     }
 
-    /* Sidebar Estilo Gemini */
-    [data-testid="stSidebar"] {
-        background-color: #f8f9fa;
-        border-right: 1px solid #e0e0e0;
+    /* Caja de texto estilo Gemini */
+    .stChatInput textarea {
+        border-radius: 28px !important;
+        padding-left: 55px !important;
+        background-color: #f0f2f6 !important;
+        border: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. LÓGICA DE CHATS ---
+# --- 3. INICIALIZACIÓN SEGURA (EVITA EL KEYERROR) ---
 if "chats" not in st.session_state:
-    st.session_state.chats = {"Nuevo Chat": []}
-if "current_chat" not in st.session_state:
-    st.session_state.current_chat = "Nuevo Chat"
+    st.session_state.chats = {"Chat 1": []}
 
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+if "current_chat" not in st.session_state or st.session_state.current_chat not in st.session_state.chats:
+    st.session_state.current_chat = list(st.session_state.chats.keys())[0]
+
+# Conexión Groq
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except Exception:
+    st.error("Error: Asegúrate de configurar GROQ_API_KEY en los Secrets.")
+    st.stop()
 
 # --- 4. SIDEBAR (HISTORIAL) ---
 with st.sidebar:
-    st.markdown("<h2 style='padding: 0;'>✨ Gemini</h2>", unsafe_allow_html=True)
+    st.markdown("### ✨ Gemini")
     if st.button("➕ Nuevo chat", use_container_width=True):
-        name = f"Chat {len(st.session_state.chats) + 1}"
-        st.session_state.chats[name] = []
-        st.session_state.current_chat = name
+        new_name = f"Chat {len(st.session_state.chats) + 1}"
+        st.session_state.chats[new_name] = []
+        st.session_state.current_chat = new_name
         st.rerun()
     
     st.divider()
     for chat_id in reversed(list(st.session_state.chats.keys())):
-        if st.button(chat_id, key=chat_id, use_container_width=True):
+        # Botón para cambiar de chat
+        if st.button(chat_id, key=f"nav_{chat_id}", use_container_width=True):
             st.session_state.current_chat = chat_id
             st.rerun()
 
-# --- 5. PANTALLA DE CHAT ---
+# --- 5. RENDERIZADO DE CHAT ---
 st.subheader(st.session_state.current_chat)
 
-# Mostrar mensajes
-for msg in st.session_state.chats[st.session_state.current_chat]:
+# Verificación de seguridad antes de iterar
+chat_actual = st.session_state.chats.get(st.session_state.current_chat, [])
+
+for msg in chat_actual:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- 6. BARRA INFERIOR INTEGRADA ---
-# El clip se posiciona automáticamente por el CSS arriba
+# --- 6. BARRA DE ENTRADA ---
 with st.container():
-    archivo = st.file_uploader("", type=["pdf", "png", "jpg", "csv", "xlsx", "txt"], label_visibility="collapsed")
-    prompt = st.chat_input("Escribe tu mensaje aquí...")
+    # El clip se posiciona automáticamente por CSS
+    archivo = st.file_uploader("", type=["pdf", "png", "jpg", "txt", "csv", "xlsx"], label_visibility="collapsed")
+    prompt = st.chat_input("Escribe tu mensaje...")
 
-# --- 7. RESPUESTA DE IA ---
+# --- 7. LÓGICA DE RESPUESTA ---
 if prompt:
+    # Agregar mensaje del usuario
     st.session_state.chats[st.session_state.current_chat].append({"role": "user", "content": prompt})
     
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_res = ""
         
-        # Usamos Groq con streaming
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            stream=True
-        )
-        
-        for chunk in completion:
-            if chunk.choices[0].delta.content:
-                full_res += chunk.choices[0].delta.content
-                placeholder.markdown(full_res + "▌")
-        
-        placeholder.markdown(full_res)
-        st.session_state.chats[st.session_state.current_chat].append({"role": "assistant", "content": full_res})
-        st.rerun()
+        # Stream de Groq
+        try:
+            stream = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": m["content"]} for m in st.session_state.chats[st.session_state.current_chat]],
+                stream=True
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    full_res += chunk.choices[0].delta.content
+                    placeholder.markdown(full_res + "▌")
+            
+            placeholder.markdown(full_res)
+            st.session_state.chats[st.session_state.current_chat].append({"role": "assistant", "content": full_res})
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error en la IA: {e}")
