@@ -9,96 +9,87 @@ import io
 from fpdf import FPDF
 from docx import Document
 
-# --- CONFIGURACIÓN E INTERFAZ ESTILO GEMINI ---
-st.set_page_config(page_title="Gemini Ultra Pro", page_icon="✨", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Gemini Ultra", page_icon="✨", layout="wide")
 
-# CSS para limpiar el file uploader y estilizar el chat
+# --- CSS AVANZADO PARA INTERFAZ GEMINI ---
 st.markdown("""
     <style>
-    /* Ocultar textos del cargador de archivos para dejar solo el clip */
-    section[data-testid="stFileUploader"] section { padding: 0; min-height: 0; border: none; }
-    section[data-testid="stFileUploader"] label, 
-    section[data-testid="stFileUploader"] small { display: none; }
-    
-    /* Ajuste de la barra inferior */
-    .stChatFloatingInputContainer { 
-        padding-bottom: 20px; 
-        background-color: transparent !important; 
+    /* 1. Ocultar completamente los textos del cargador de archivos */
+    [data-testid="stFileUploader"] section { padding: 0; min-height: 0; border: none; background: transparent; }
+    [data-testid="stFileUploader"] label, [data-testid="stFileUploader"] small, 
+    [data-testid="stFileUploader"] div[data-testid="stMarkdownContainer"] { display: none; }
+    [data-testid="stFileUploader"] button { 
+        border: none; background: #f0f2f6; border-radius: 50%; width: 40px; height: 40px;
     }
-    
-    /* Contenedor principal centrado */
-    .block-container { max-width: 900px; padding-top: 2rem; }
-    
-    /* Estilo para los botones del historial */
-    .stButton>button {
-        width: 100%;
-        text-align: left;
-        border: none;
-        background: transparent;
+
+    /* 2. Anclar la barra de entrada al fondo */
+    .stChatFloatingInputContainer {
+        position: fixed;
+        bottom: 30px;
+        background-color: white !important;
         padding: 10px;
-        border-radius: 10px;
+        z-index: 100;
     }
-    .stButton>button:hover { background-color: #e0e0e0; }
+
+    /* 3. Estilo de los mensajes */
+    .stChatMessage { border-radius: 20px; margin-bottom: 15px; max-width: 85%; }
+    
+    /* 4. Sidebar Estilizada */
+    [data-testid="stSidebar"] { background-color: #f8f9fa; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- GESTIÓN DE ESTADOS (MEMORIA Y CHATS) ---
-if "all_chats" not in st.session_state:
-    st.session_state.all_chats = {} # Diccionario para guardar múltiples chats
-if "current_chat_id" not in st.session_state:
-    st.session_state.current_chat_id = "Chat 1"
-if st.session_state.current_chat_id not in st.session_state.all_chats:
-    st.session_state.all_chats[st.session_state.current_chat_id] = []
-
+# --- INICIALIZACIÓN DE CLIENTE Y ESTADOS ---
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# --- BARRA LATERAL (HISTORIAL Y NUEVO CHAT) ---
+if "all_chats" not in st.session_state:
+    st.session_state.all_chats = {"Chat 1": []}
+if "current_chat" not in st.session_state:
+    st.session_state.current_chat = "Chat 1"
+
+# --- SIDEBAR (HISTORIAL) ---
 with st.sidebar:
-    st.title("✨ Gemini Pro")
-    if st.button("➕ Nuevo chat", use_container_width=True):
+    st.title("✨ Gemini")
+    if st.button("➕ Nuevo Chat", use_container_width=True):
         new_id = f"Chat {len(st.session_state.all_chats) + 1}"
         st.session_state.all_chats[new_id] = []
-        st.session_state.current_chat_id = new_id
+        st.session_state.current_chat = new_id
         st.rerun()
     
     st.divider()
-    st.subheader("Recientes")
     for chat_id in reversed(list(st.session_state.all_chats.keys())):
-        if st.button(chat_id, key=chat_id):
-            st.session_state.current_chat_id = chat_id
+        if st.button(chat_id, key=f"btn_{chat_id}"):
+            st.session_state.current_chat = chat_id
             st.rerun()
 
-# --- FUNCIONES DE DOCUMENTOS ---
-def crear_pdf(texto):
-    pdf = FPDF()
-    pdf.add_page(); pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, txt=texto.encode('latin-1', 'replace').decode('latin-1'))
-    return pdf.output(dest='S').encode('latin-1')
+# --- ÁREA DE CHAT (MENSAJES) ---
+# Contenedor para que el chat no choque con la barra de abajo
+chat_container = st.container()
+with chat_container:
+    st.subheader(st.session_state.current_chat)
+    for msg in st.session_state.all_chats[st.session_state.current_chat]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if "chart" in msg: st.plotly_chart(msg["chart"])
+            if "file" in msg: st.download_button(**msg["file"])
 
-def crear_word(texto):
-    doc = Document(); doc.add_paragraph(texto)
-    bio = io.BytesIO(); doc.save(bio); return bio.getvalue()
+# Espacio extra para que el último mensaje no quede detrás de la barra
+st.markdown("<br><br><br><br><br><br>", unsafe_allow_html=True)
 
-# --- PANTALLA PRINCIPAL DE CHAT ---
-st.title(st.session_state.current_chat_id)
-
-# Mostrar mensajes del chat actual
-current_messages = st.session_state.all_chats[st.session_state.current_chat_id]
-for msg in current_messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if "chart" in msg: st.plotly_chart(msg["chart"])
-        if "file" in msg: st.download_button(**msg["file"])
-
-# --- BARRA DE ENTRADA CON CLIP ---
+# --- BARRA INFERIOR (ENTRADA Y CARGA) ---
 with st.container():
-    # Esta fila simula la barra de entrada de Gemini
-    c1, c2 = st.columns([0.08, 0.92])
-    with c1:
+    # Usamos columnas dentro de un contenedor fijo por CSS
+    col_file, col_txt = st.columns([0.07, 0.93])
+    
+    with col_file:
+        # Solo se verá el botón de "Browse" que estilice con CSS para que parezca un icono
         archivo = st.file_uploader("📎", type=["pdf", "png", "jpg", "csv", "xlsx", "txt"], label_visibility="collapsed")
-    with c2:
-        prompt = st.chat_input("Escribe tu mensaje...")
+    
+    with col_txt:
+        prompt = st.chat_input("Escribe tu mensaje aquí...")
 
+# --- LÓGICA DE PROCESAMIENTO ---
 if prompt:
     contexto_archivo = ""
     img_b64 = None
@@ -110,50 +101,53 @@ if prompt:
             reader = PyPDF2.PdfReader(archivo)
             contexto_archivo = "Contenido PDF: " + " ".join([p.extract_text() for p in reader.pages])
 
-    # Guardar mensaje del usuario
-    current_messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # Guardar y mostrar mensaje del usuario
+    st.session_state.all_chats[st.session_state.current_chat].append({"role": "user", "content": prompt})
+    st.rerun() # Rerunning para asegurar el orden visual
 
-    # Respuesta de la IA
+# Si el último mensaje es del usuario, generar respuesta del asistente
+messages = st.session_state.all_chats[st.session_state.current_chat]
+if messages and messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
+        user_prompt = messages[-1]["content"]
         modelo = "llama-3.2-11b-vision-preview" if img_b64 else "llama-3.3-70b-versatile"
-        sys_prompt = f"Eres Gemini, una IA avanzada de Google. Hoy es {datetime.now()}. {contexto_archivo}. Si piden gráficos usa [DATA: {{\"item\": valor}}]"
         
-        msgs_api = [{"role": "system", "content": sys_prompt}]
-        if img_b64:
-            msgs_api.append({"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img_b64}}]})
-        else:
-            for m in current_messages[-5:]: msgs_api.append({"role": m["role"], "content": m["content"]})
+        sys_prompt = f"Eres Gemini. Fecha: {datetime.now()}. {contexto_archivo}. Si piden gráficos usa [DATA: {{\"Etiqueta\": valor}}]"
+        
+        api_msgs = [{"role": "system", "content": sys_prompt}]
+        # Memoria corta (últimos 4 mensajes)
+        for m in messages[-4:]:
+            api_msgs.append({"role": m["role"], "content": m["content"]})
 
-        placeholder = st.empty(); full_res = ""
-        completion = client.chat.completions.create(model=modelo, messages=msgs_api, stream=True)
+        full_res = ""
+        placeholder = st.empty()
         
+        completion = client.chat.completions.create(model=modelo, messages=api_msgs, stream=True)
         for chunk in completion:
             if chunk.choices[0].delta.content:
                 full_res += chunk.choices[0].delta.content
                 placeholder.markdown(full_res + "▌")
         placeholder.markdown(full_res)
 
-        # Empaquetar respuesta
+        # Crear el objeto de mensaje
         new_msg = {"role": "assistant", "content": full_res}
 
-        # Gráficos dinámicos
+        # Detección de gráficos
         if "[DATA:" in full_res:
             try:
                 import json
                 data_json = json.loads(full_res.split("[DATA:")[1].split("]")[0])
-                fig = px.pie(names=list(data_json.keys()), values=list(data_json.values()), title="Análisis de Datos")
-                st.plotly_chart(fig); new_msg["chart"] = fig
+                fig = px.pie(names=list(data_json.keys()), values=list(data_json.values()), hole=0.4)
+                st.plotly_chart(fig)
+                new_msg["chart"] = fig
             except: pass
 
-        # Generación de archivos por texto
-        p_low = prompt.lower()
+        # Detección de archivos
+        p_low = user_prompt.lower()
         if "pdf" in p_low:
-            new_msg["file"] = {"label": "📥 Bajar PDF", "data": crear_pdf(full_res), "file_name": "gemini_doc.pdf"}
-        elif "word" in p_low:
-            new_msg["file"] = {"label": "📥 Bajar Word", "data": crear_word(full_res), "file_name": "gemini_doc.docx"}
-            
-        if "file" in new_msg: st.download_button(**new_msg["file"])
+            pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", size=12)
+            pdf.multi_cell(0, 10, txt=full_res.encode('latin-1', 'replace').decode('latin-1'))
+            new_msg["file"] = {"label": "📥 Descargar PDF", "data": pdf.output(dest='S').encode('latin-1'), "file_name": "documento.pdf"}
         
-        current_messages.append(new_msg)
+        st.session_state.all_chats[st.session_state.current_chat].append(new_msg)
+        st.rerun()
