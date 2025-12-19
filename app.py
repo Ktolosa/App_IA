@@ -4,119 +4,139 @@ from datetime import datetime
 import PyPDF2
 import base64
 import pandas as pd
+import plotly.express as px
 import io
+from fpdf import FPDF
+from docx import Document
 
-# 1. Configuración de página y Estilo
-st.set_page_config(page_title="Ultra IA Multimodal", page_icon="⚡", layout="wide")
+# --- CONFIGURACIÓN E INTERFAZ ---
+st.set_page_config(page_title="IA Multimodal Pro", page_icon="✨", layout="wide")
 
+# CSS para ocultar etiquetas y ajustar el botón al lado del input
 st.markdown("""
     <style>
-    .stChatFloatingInputContainer { bottom: 20px; }
-    .st-emotion-cache-1c7n2ka { max-width: 95%; }
+    .stChatFloatingInputContainer { background-color: transparent !important; }
+    div[data-testid="stColumn"] { display: flex; align-items: center; }
+    .stFileUploader { padding-bottom: 0px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Inicialización y Seguridad
-try:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
-    st.error("⚠️ Configura la GROQ_API_KEY en los Secrets de Streamlit.")
-    st.stop()
-
+# Inicializar Groq
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 3. Sidebar y Herramientas
-with st.sidebar:
-    st.title("⚙️ Panel de Control")
-    uploaded_file = st.file_uploader("Cargar archivos (PDF, Imagen, Audio, CSV, Excel)", 
-                                    type=["pdf", "png", "jpg", "jpeg", "mp3", "wav", "csv", "xlsx"])
-    if st.button("🗑️ Limpiar Chat"):
-        st.session_state.messages = []
-        st.rerun()
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except:
+    st.error("Configura GROQ_API_KEY en Secrets.")
+    st.stop()
 
-# 4. Procesamiento de Archivos (Detección Inteligente)
-contexto_archivo = ""
-image_content = None
+# --- FUNCIONES DE GENERACIÓN DE ARCHIVOS ---
+def crear_pdf(texto):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.multi_cell(0, 10, txt=texto.encode('latin-1', 'replace').decode('latin-1'))
+    return pdf.output(dest='S').encode('latin-1')
 
-if uploaded_file:
-    with st.status("Procesando archivo..."):
-        if uploaded_file.type in ["image/png", "image/jpeg"]:
-            base64_image = base64.b64encode(uploaded_file.read()).decode('utf-8')
-            image_content = f"data:{uploaded_file.type};base64,{base64_image}"
-            contexto_archivo = "[Imagen cargada lista para análisis visual]"
-        
-        elif uploaded_file.type == "application/pdf":
-            pdf_reader = PyPDF2.PdfReader(uploaded_file)
-            texto = " ".join([p.extract_text() for p in pdf_reader.pages])
-            contexto_archivo = f"\n[CONTENIDO PDF]: {texto[:10000]}" # Límite para evitar errores
-            
-        elif "audio" in uploaded_file.type:
-            transcription = client.audio.transcriptions.create(
-                file=(uploaded_file.name, uploaded_file.read()),
-                model="whisper-large-v3"
-            )
-            contexto_archivo = f"\n[TRANSCRIPCIÓN AUDIO]: {transcription.text}"
-            
-        elif uploaded_file.name.endswith(('.csv', '.xlsx')):
-            df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-            st.dataframe(df.head(10))
-            contexto_archivo = f"\n[DATOS TABULARES (Primeras filas)]: {df.head(5).to_string()}"
+def crear_word(texto):
+    doc = Document()
+    doc.add_paragraph(texto)
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
 
-# 5. Visualización del Chat
+# --- UI: CHAT HISTORIAL ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if "chart" in message:
+            st.plotly_chart(message["chart"], use_container_width=True)
+        if "file" in message:
+            st.download_button(**message["file"])
 
-# 6. Entrada de Usuario y Lógica IA
-if prompt := st.chat_input("Escribe aquí o pregunta sobre el archivo..."):
+# --- UI: BARRA DE ENTRADA (ESTILO GEMINI) ---
+# Usamos un contenedor en la parte inferior
+with st.container():
+    c1, c2 = st.columns([0.1, 0.9])
+    with c1:
+        archivo_subido = st.file_uploader("📎", type=["pdf", "png", "jpg", "csv", "xlsx", "txt"], label_visibility="collapsed")
+    with c2:
+        prompt = st.chat_input("Escribe tu consulta o pide un gráfico/archivo...")
+
+if prompt:
+    # 1. Procesar contexto de archivos subidos
+    contexto_archivo = ""
+    img_b64 = None
+    if archivo_subido:
+        if "image" in archivo_subido.type:
+            img_b64 = f"data:{archivo_subido.type};base64,{base64.b64encode(archivo_subido.read()).decode()}"
+        elif "pdf" in archivo_subido.type:
+            reader = PyPDF2.PdfReader(archivo_subido)
+            contexto_archivo = "Contenido PDF: " + " ".join([p.extract_text() for p in reader.pages])
+        elif "csv" in archivo_subido.type or "sheet" in archivo_subido.type:
+            df_input = pd.read_csv(archivo_subido) if "csv" in archivo_subido.type else pd.read_excel(archivo_subido)
+            contexto_archivo = f"Datos del archivo: {df_input.head(10).to_dict()}"
+
+    # 2. Mostrar mensaje del usuario
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # 3. Respuesta de la IA
     with st.chat_message("assistant"):
-        # Selección de modelo
-        model_to_use = "llama-3.2-11b-vision-preview" if image_content else "llama-3.3-70b-versatile"
+        modelo = "llama-3.2-11b-vision-preview" if img_b64 else "llama-3.3-70b-versatile"
         
-        # System Prompt con superpoderes
-        sys_msg = f"""Eres una IA avanzada. Hoy es {datetime.now().strftime('%Y-%m-%d')}.
-        Capacidades actuales:
-        - Si hay datos, analízalos.
-        - Si el usuario pide un PDF/Excel/Word, responde primero con texto y luego genera el contenido.
-        - Si pide gráficos, usa tablas de markdown.
-        Archivo actual: {contexto_archivo if contexto_archivo else 'Ninguno'}"""
+        sys_prompt = f"""Eres una IA avanzada. Hoy es {datetime.now()}. 
+        Si te piden un gráfico, inventa datos coherentes si no hay, y responde SIEMPRE al final con el formato:
+        [DATA: {{"Etiqueta1": 10, "Etiqueta2": 20}}]
+        Si piden un archivo, responde normal y yo generaré el botón."""
 
-        messages_api = [{"role": "system", "content": sys_msg}]
-        
-        if image_content:
-            messages_api.append({
-                "role": "user",
-                "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": image_content}}]
-            })
+        # Construir mensajes
+        msgs = [{"role": "system", "content": sys_prompt}]
+        if img_b64:
+            msgs.append({"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img_b64}}]})
         else:
-            for m in st.session_state.messages[-6:]: # Memoria de los últimos 6 mensajes
-                messages_api.append({"role": m["role"], "content": m["content"]})
+            for m in st.session_state.messages[-5:]:
+                msgs.append({"role": m["role"], "content": m["content"]})
 
-        # Generación con Streaming
-        res_placeholder = st.empty()
+        # Streaming
+        placeholder = st.empty()
         full_res = ""
+        completion = client.chat.completions.create(model=modelo, messages=msgs, stream=True)
+        for chunk in completion:
+            if chunk.choices[0].delta.content:
+                full_res += chunk.choices[0].delta.content
+                placeholder.markdown(full_res + "▌")
+        placeholder.markdown(full_res)
+
+        new_msg = {"role": "assistant", "content": full_res}
+
+        # --- LÓGICA DE GRÁFICOS ---
+        if "[DATA:" in full_res:
+            try:
+                import json
+                data_str = full_res.split("[DATA:")[1].split("]")[0]
+                data_json = json.loads(data_str)
+                fig = px.pie(names=list(data_json.keys()), values=list(data_json.values()), title="Gráfico Generado")
+                st.plotly_chart(fig)
+                new_msg["chart"] = fig
+            except: pass
+
+        # --- LÓGICA DE ARCHIVOS ---
+        p_low = prompt.lower()
+        if "pdf" in p_low:
+            new_msg["file"] = {"label": "📥 Descargar PDF", "data": crear_pdf(full_res), "file_name": "archivo.pdf", "mime": "application/pdf"}
+        elif "word" in p_low or "docx" in p_low:
+            new_msg["file"] = {"label": "📥 Descargar Word", "data": crear_word(full_res), "file_name": "archivo.docx", "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+        elif "excel" in p_low:
+            df = pd.DataFrame([{"Contenido": full_res}])
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False)
+            new_msg["file"] = {"label": "📥 Descargar Excel", "data": output.getvalue(), "file_name": "datos.xlsx", "mime": "application/vnd.ms-excel"}
+
+        if "file" in new_msg:
+            st.download_button(**new_msg["file"])
         
-        try:
-            completion = client.chat.completions.create(model=model_to_use, messages=messages_api, stream=True)
-            for chunk in completion:
-                if chunk.choices[0].delta.content:
-                    full_res += chunk.choices[0].delta.content
-                    res_placeholder.markdown(full_res + "▌")
-            res_placeholder.markdown(full_res)
-            st.session_state.messages.append({"role": "assistant", "content": full_res})
-            
-            # --- FUNCIÓN ESPECIAL: GENERAR ARCHIVOS DESCARGABLES ---
-            if "generar excel" in prompt.lower() or "bajar datos" in prompt.lower():
-                df_download = pd.DataFrame([{"Resultado": "IA Gen", "Fecha": datetime.now()}] )
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_download.to_excel(writer, index=False)
-                st.download_button("📥 Descargar Excel Generado", data=output.getvalue(), file_name="analisis.xlsx")
-                
-        except Exception as e:
-            st.error(f"Error: {e}")
+        st.session_state.messages.append(new_msg)
