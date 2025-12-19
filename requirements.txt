@@ -2,5 +2,7 @@ streamlit
 groq
 PyPDF2
 pandas
+plotly
+fpdf
+python-docx
 xlsxwriter
-openpyxl
